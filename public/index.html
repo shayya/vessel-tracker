@@ -108,6 +108,17 @@ body { display: flex; flex-direction: column; }
 /* ─── Map ────────────────────────────────────────────────────── */
 #map { flex: 1; min-height: 0; }
 
+/* Layer switcher — keep it above the draw toolbar */
+.leaflet-control-layers {
+  border-radius: 6px !important;
+  margin-right: 0 !important;
+  margin-bottom: 32px !important;
+  font-family: 'Inter', sans-serif !important;
+  font-size: 12px !important;
+}
+.leaflet-control-layers-list { padding: 4px 0 !important; }
+.leaflet-control-layers-selector { margin-right: 5px; }
+
 /* ─── Status bar ─────────────────────────────────────────────── */
 #status-bar {
   background: rgba(15, 23, 42, 0.94);
@@ -456,6 +467,7 @@ const LS = {
   geofence:       'ais_geofence',
   theme:          'ais_theme',
   trackOnly:      'ais_trackOnly',
+  mapStyle:       'ais_mapStyle',
 };
 
 // ─── App state ────────────────────────────────────────────────────────────────
@@ -499,6 +511,17 @@ function applyTheme(t) {
   document.documentElement.setAttribute('data-theme', t);
   localStorage.setItem(LS.theme, t);
   document.getElementById('theme-btn').textContent = t === 'dark' ? '☀' : '☾';
+  // Auto-switch map style to match theme (respects manual override if saved)
+  if (map) {
+    const saved = localStorage.getItem(LS.mapStyle);
+    if (!saved) {
+      const layerId = t === 'light' ? 'Light' : 'Dark';
+      if (TILE_LAYERS[layerId]) {
+        map.removeLayer(Object.values(TILE_LAYERS).find(l => map.hasLayer(l)));
+        TILE_LAYERS[layerId].addTo(map);
+      }
+    }
+  }
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -873,13 +896,47 @@ function updateTrackToggle() {
 function openSettings()  { document.getElementById('settings-panel').classList.add('open'); document.getElementById('settings-overlay').classList.add('open'); map.invalidateSize(); }
 function closeSettings() { document.getElementById('settings-panel').classList.remove('open'); document.getElementById('settings-overlay').classList.remove('open'); map.invalidateSize(); }
 
+// ─── Tile layers ──────────────────────────────────────────────────────────────
+const TILE_LAYERS = {
+  'Standard': L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '&copy; <a href="https://openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    maxZoom: 19,
+  }),
+  'Dark': L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    attribution: '&copy; <a href="https://openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>',
+    maxZoom: 20,
+  }),
+  'Light': L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+    attribution: '&copy; <a href="https://openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>',
+    maxZoom: 20,
+  }),
+  'Voyager': L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+    attribution: '&copy; <a href="https://openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>',
+    maxZoom: 20,
+  }),
+  'Topographic': L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
+    attribution: '&copy; <a href="https://openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://opentopomap.org">OpenTopoMap</a>',
+    maxZoom: 17,
+  }),
+};
+
 // ─── Map init ─────────────────────────────────────────────────────────────────
 function initMap() {
+  // Pick initial layer: saved preference, or match the app theme
+  const saved   = localStorage.getItem(LS.mapStyle);
+  const themeId = currentTheme();
+  const defaultId = saved || (themeId === 'light' ? 'Light' : 'Dark');
+  const baseLayer = TILE_LAYERS[defaultId] || TILE_LAYERS['Dark'];
+
   map = L.map('map').setView(DEFAULT_CENTER, DEFAULT_ZOOM);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution: '© <a href="https://openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-    maxZoom: 19,
-  }).addTo(map);
+  baseLayer.addTo(map);
+
+  L.control.layers(TILE_LAYERS, null, { position: 'topright', collapsed: true }).addTo(map);
+
+  // Persist layer choice on switch
+  map.on('baselayerchange', (e) => {
+    localStorage.setItem(LS.mapStyle, e.name);
+  });
 
   drawnItems = new L.FeatureGroup().addTo(map);
 

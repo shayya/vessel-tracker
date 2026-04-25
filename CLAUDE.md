@@ -174,14 +174,30 @@ Single self-contained file. No build step, no bundler.
 | `ais_alertCooldown` | `30` | Per-vessel cooldown in minutes |
 | `ais_geofence` | `null` | `[[lat,lon],...]` of drawn polygon vertices |
 | `ais_theme` | `"system"` | `"dark"` or `"light"` |
+| `ais_mapStyle` | `null` | Selected tile layer name (`"Dark"`, `"Light"`, `"Standard"`, `"Voyager"`, `"Topographic"`) |
 
 ### Boot sequence
 1. Inline `<script>` at top of `<body>` sets `data-theme` immediately (prevents flash)
 2. `DOMContentLoaded` → `await seedFromDefaults()` fetches `/api/defaults`, seeds `localStorage` if empty
-3. `initMap()` — Leaflet map, Leaflet.draw toolbar, loads saved geofence from `localStorage`
+3. `initMap()` — Leaflet map with selectable tile layers (Dark/Light/Standard/Voyager/Topographic), Leaflet.draw toolbar, loads saved geofence from `localStorage`
 4. `initUI()` — wires all settings inputs from current `cfg`, sets up event listeners
 5. `initWS()` — connects WebSocket to relay, sends `configure` message
 6. `setInterval(checkStale, 60_000)` — marks vessels grey after 10 min with no update
+
+### Map tile layers
+Uses Leaflet's `L.control.layers()` to provide a base layer switcher in the top-right corner. Available styles:
+
+| Name | Source | Notes |
+|------|--------|-------|
+| Dark | CartoDB Dark Matter | Default for dark app theme |
+| Light | CartoDB Positron | Default for light app theme |
+| Standard | OpenStreetMap | Classic OSM tiles |
+| Voyager | CartoDB Voyager | Colorful, neutral basemap |
+| Topographic | OpenTopoMap | Elevation contours, max zoom 17 |
+
+- Default selection matches the app theme (dark→Dark, light→Light) unless the user has a saved preference in `ais_mapStyle`
+- Layer choice persists in `localStorage`; once manually selected it overrides theme-based auto-switching
+- Theme toggle (☀/☾) auto-switches map style only if no manual preference is saved
 
 ### WebSocket keepalive (browser side)
 - `startWSKeepAlive()` runs `setInterval` every 25 s
