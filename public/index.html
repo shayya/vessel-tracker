@@ -89,6 +89,7 @@ body { display: flex; flex-direction: column; }
   flex-shrink: 0;
 }
 .icon-btn:hover { background: var(--border); border-color: var(--accent); }
+.icon-btn.active { border-color: var(--accent); color: var(--accent); }
 
 /* ─── Status dot ─────────────────────────────────────────────── */
 .status-dot {
@@ -352,6 +353,7 @@ input:focus, select:focus { border-color: var(--accent); }
   <span class="app-title">Vessel Tracker</span>
   <div class="header-right">
     <div id="status-dot" class="status-dot disconnected" title="Connection status"></div>
+    <button id="track-toggle" class="icon-btn" title="Toggle tracked / all vessels">◎</button>
     <button id="theme-btn"    class="icon-btn" title="Toggle theme">☀</button>
     <button id="settings-btn" class="icon-btn" title="Settings">⚙</button>
   </div>
@@ -453,6 +455,7 @@ const LS = {
   alertCooldown:  'ais_alertCooldown',
   geofence:       'ais_geofence',
   theme:          'ais_theme',
+  trackOnly:      'ais_trackOnly',
 };
 
 // ─── App state ────────────────────────────────────────────────────────────────
@@ -474,6 +477,7 @@ function loadSettings() {
     maxVessels:     parseInt(localStorage.getItem(LS.maxVessels)     || '5'),
     speedThreshold: parseFloat(localStorage.getItem(LS.speedThreshold) || '2.0'),
     alertCooldown:  parseInt(localStorage.getItem(LS.alertCooldown)  || '30'),
+    trackOnly:      localStorage.getItem(LS.trackOnly) !== 'false',
   };
 }
 
@@ -485,6 +489,7 @@ function saveSettings() {
   localStorage.setItem(LS.maxVessels,     String(cfg.maxVessels));
   localStorage.setItem(LS.speedThreshold, String(cfg.speedThreshold));
   localStorage.setItem(LS.alertCooldown,  String(cfg.alertCooldown));
+  localStorage.setItem(LS.trackOnly,      String(cfg.trackOnly));
 }
 
 // ─── Theme ────────────────────────────────────────────────────────────────────
@@ -645,6 +650,7 @@ function updateZoneStatus() {
 // ─── Alert logic ──────────────────────────────────────────────────────────────
 function checkAlert(mmsi) {
   if (!geofenceGeoJSON) return;
+  if (!cfg.mmsiList.includes(mmsi)) return;
   const v = vessels.get(mmsi);
   if (!v || v.stale) return;
 
@@ -694,8 +700,12 @@ function setStatus(status, text) {
 function updateStatusBar() {
   const tracked = cfg.mmsiList.length;
   const active  = [...vessels.values()].filter(v => !v.stale).length;
-  document.getElementById('vessel-count').textContent =
-    `${tracked} vessel${tracked !== 1 ? 's' : ''} tracked, ${active} active`;
+  const el = document.getElementById('vessel-count');
+  if (cfg.trackOnly) {
+    el.textContent = `${tracked} vessel${tracked !== 1 ? 's' : ''} tracked, ${active} active`;
+  } else {
+    el.textContent = `Showing all vessels: ${active} active (${tracked} tracked)`;
+  }
 }
 
 // ─── WebSocket to relay server ────────────────────────────────────────────────
@@ -721,7 +731,7 @@ function initWS() {
   ws = new WebSocket(`ws://${location.hostname}:3000`);
 
   ws.onopen = () => {
-    sendToServer({ type:'configure', apiKey: cfg.apiKey, mmsiList: cfg.mmsiList, boundingBox: DEFAULT_BBOX });
+    sendToServer({ type:'configure', apiKey: cfg.apiKey, mmsiList: cfg.mmsiList, boundingBox: DEFAULT_BBOX, trackOnly: cfg.trackOnly });
     setStatus('connected');
     startWSKeepAlive();
   };
@@ -761,7 +771,7 @@ document.addEventListener('visibilitychange', () => {
 });
 
 function reconfigure() {
-  sendToServer({ type:'reconfigure', apiKey: cfg.apiKey, mmsiList: cfg.mmsiList, boundingBox: DEFAULT_BBOX });
+  sendToServer({ type:'reconfigure', apiKey: cfg.apiKey, mmsiList: cfg.mmsiList, boundingBox: DEFAULT_BBOX, trackOnly: cfg.trackOnly });
 }
 
 // ─── Position report handler ──────────────────────────────────────────────────
@@ -833,6 +843,33 @@ function doRemoveMMSI(mmsi) {
   reconfigure();
 }
 
+function toggleTrackOnly() {
+  cfg.trackOnly = !cfg.trackOnly;
+  saveSettings();
+  updateTrackToggle();
+  if (cfg.trackOnly) {
+    // Remove non-tracked vessels from the map
+    vessels.forEach((v, mmsi) => {
+      if (!cfg.mmsiList.includes(mmsi)) removeVesselFromMap(mmsi);
+    });
+  }
+  updateStatusBar();
+  reconfigure();
+}
+
+function updateTrackToggle() {
+  const btn = document.getElementById('track-toggle');
+  if (cfg.trackOnly) {
+    btn.textContent = '◎';
+    btn.title = 'Tracking: show tracked vessels only';
+    btn.classList.remove('active');
+  } else {
+    btn.textContent = '◉';
+    btn.title = 'Tracking: show all vessels in area';
+    btn.classList.add('active');
+  }
+}
+
 function openSettings()  { document.getElementById('settings-panel').classList.add('open'); document.getElementById('settings-overlay').classList.add('open'); map.invalidateSize(); }
 function closeSettings() { document.getElementById('settings-panel').classList.remove('open'); document.getElementById('settings-overlay').classList.remove('open'); map.invalidateSize(); }
 
@@ -891,6 +928,10 @@ function initUI() {
   document.getElementById('settings-btn').addEventListener('click', openSettings);
   document.getElementById('settings-close').addEventListener('click', closeSettings);
   document.getElementById('settings-overlay').addEventListener('click', closeSettings);
+
+  // Track toggle
+  updateTrackToggle();
+  document.getElementById('track-toggle').addEventListener('click', toggleTrackOnly);
 
   // API key
   const apiInput = document.getElementById('api-key-input');

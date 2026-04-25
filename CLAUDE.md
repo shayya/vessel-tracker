@@ -1,6 +1,6 @@
-# CLAUDE.md — Vessel Tracker
+# CLAUDE.md
 
-This file gives an AI assistant full context to continue work on this project without needing the conversation history.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ---
 
@@ -11,8 +11,6 @@ A real-time AIS vessel tracking web app for San Diego harbor. It:
 - Displays vessel positions as rotating arrow markers on a Leaflet map
 - Lets the user draw a geofence polygon; when a tracked vessel is slow inside that zone, it fires a push notification via ntfy.sh to the user's phone
 - Runs 24/7 as a macOS background service (launchd)
-
-The user's name is Shayan. The ntfy topic is `shaya-vessel-alerts`.
 
 ---
 
@@ -33,14 +31,9 @@ lsof -ti:3000                                                        # check if 
 
 ---
 
-## Credentials & configuration (`.env`)
+## Configuration (`.env`)
 
-```
-AIS_API_KEY=8bc9f40dadbf07edf389485409e5284bd1917a47
-AIS_MMSI_LIST=366889830,368173590,368068510
-```
-
-`.env` is gitignored. The server parses it manually at startup (no dotenv package — built-in `fs.readFileSync`). Values are exposed to the browser only via the `/api/defaults` endpoint (localhost-only, acceptable risk).
+`.env` holds the API key and MMSI list (gitignored). The server parses it manually at startup (no dotenv package). Values are exposed to the browser only via the `/api/defaults` endpoint (localhost-only, acceptable risk).
 
 ### Tracked vessels
 | MMSI | Name | Status |
@@ -65,7 +58,7 @@ server.js (Node.js, port 3000)
   │  Per-client WebSocket connection
   ▼
 wss://stream.aisstream.io/v0/stream  (AISStream — AIS data source)
-  
+
 server.js also:
   ├── Serves static files from ./public/
   ├── Exposes GET /api/defaults (seeds browser with .env values)
@@ -227,7 +220,7 @@ if now - lastAlertTime[mmsi] < cooldownMs → return
 ### Theme
 - CSS custom properties on `:root` and `[data-theme="light"]`
 - Applied to `<html data-theme="...">` before first paint to prevent flash
-- Toggled by the ☀/☾ button in the header
+- Toggled by the sun/moon button in the header
 
 ---
 

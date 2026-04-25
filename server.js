@@ -138,12 +138,15 @@ wss.on('connection', (clientWs) => {
     socket.on('open', () => {
       if (socket !== aisWs) return;
       console.log('[AIS] Connected — sending subscription');
-      socket.send(JSON.stringify({
+      const sub = {
         APIKey:             config.apiKey,
         BoundingBoxes:      [config.boundingBox],
-        FiltersShipMMSI:    config.mmsiList,
         FilterMessageTypes: ['PositionReport'],
-      }));
+      };
+      if (config.trackOnly && config.mmsiList.length > 0) {
+        sub.FiltersShipMMSI = config.mmsiList;
+      }
+      socket.send(JSON.stringify(sub));
       startHeartbeat(socket); // keep TCP alive + detect zombie connections
       send({ type: 'status', status: 'connected' });
     });
@@ -193,6 +196,7 @@ wss.on('connection', (clientWs) => {
       apiKey:      msg.apiKey      != null ? String(msg.apiKey)      : (fallback?.apiKey      ?? ''),
       mmsiList:    Array.isArray(msg.mmsiList)    ? msg.mmsiList.map(String)    : (fallback?.mmsiList    ?? []),
       boundingBox: Array.isArray(msg.boundingBox) ? msg.boundingBox              : (fallback?.boundingBox ?? [[32.5, -117.5], [32.9, -116.9]]),
+      trackOnly:   msg.trackOnly != null ? Boolean(msg.trackOnly) : (fallback?.trackOnly ?? true),
     };
   }
 
