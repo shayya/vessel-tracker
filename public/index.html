@@ -543,8 +543,15 @@ function esc(s) {
 
 function fmtTime(timeStr) {
   try {
-    const d = new Date(timeStr.replace(' UTC','').replace(' ','T'));
-    return isNaN(d) ? timeStr : d.toLocaleString();
+    // AISStream format: "2024-01-25 01:25:13.750579416 +0000 UTC"
+    // Extract just "YYYY-MM-DD HH:MM:SS" which Date can parse as UTC
+    const m = String(timeStr).match(/(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})/);
+    if (!m) return timeStr;
+    const d = new Date(m[1] + 'T' + m[2] + 'Z');
+    if (isNaN(d)) return timeStr;
+    const date = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    const time = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }).replace(' AM', 'AM').replace(' PM', 'PM');
+    return `${date}, ${time}`;
   } catch { return timeStr; }
 }
 
@@ -600,7 +607,7 @@ function popupHTML(v) {
   const hdg     = (v.heading !== undefined && v.heading !== 511) ? `${v.heading}°` : 'N/A';
   const updated = v.time ? fmtTime(v.time) : 'N/A';
   return `
-    <div style="font-family:'Inter',sans-serif;min-width:190px;">
+    <div style="font-family:'Inter',sans-serif;">
       <div style="font-size:14px;font-weight:600;color:#06b6d4;margin-bottom:8px;">${esc(v.name)}</div>
       <table style="width:100%;border-collapse:collapse;font-size:12px;line-height:1.6;">
         <tr><td style="color:#94a3b8;padding-right:8px;width:90px;">MMSI</td><td>${esc(v.mmsi)}</td></tr>
@@ -643,7 +650,7 @@ function upsertVessel(data) {
     const v = { mmsi, name: name || mmsi, sog: sog ?? 0, cog: cog ?? 0, heading, navStatus, time, lat: lat ?? 0, lon: lon ?? 0, lastUpdate: Date.now(), stale: false, classB: classB || false };
     const marker = L.marker([v.lat, v.lon], { icon: makeIcon(v.sog, v.cog, v.heading, false, isTracked) });
     marker.bindTooltip(v.name, { permanent: isTracked, direction: 'right', className: 'vessel-label', offset: [10, 0] });
-    marker.bindPopup(popupHTML(v), { maxWidth: 260 });
+    marker.bindPopup(popupHTML(v), { minWidth: 280, maxWidth: 360 });
     marker.addTo(map);
     v.marker = marker;
     vessels.set(mmsi, v);
