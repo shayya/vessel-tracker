@@ -825,7 +825,8 @@ function startWSKeepAlive() {
 
 function initWS() {
   clearTimeout(wsTimer);
-  ws = new WebSocket(`ws://${location.hostname}:3000`);
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(`${proto}//${location.host}`);
 
   ws.onopen = () => {
     sendToServer({ type:'configure', apiKey: cfg.apiKey, mmsiList: cfg.mmsiList, boundingBox: DEFAULT_BBOX });
