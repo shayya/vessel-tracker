@@ -320,6 +320,11 @@ input:focus, select:focus { border-color: var(--accent); }
   margin-bottom: 10px;
 }
 .zone-status.active { border-color: var(--accent); color: var(--accent); }
+.zone-row { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; }
+.zone-row .zone-status { margin-bottom: 0; flex: 1; }
+.btn-icon { background: none; border: 1px solid var(--border); border-radius: 6px; color: var(--text); cursor: pointer; padding: 5px 7px; font-size: 14px; line-height: 1; }
+.btn-icon:hover { background: var(--border); }
+.btn-icon.hidden { opacity: 0.45; }
 
 /* ─── Vessel tooltip label ───────────────────────────────────── */
 .vessel-label {
@@ -431,7 +436,10 @@ input:focus, select:focus { border-color: var(--accent); }
 
   <div class="settings-section">
     <h3>Geofence</h3>
-    <div id="zone-status" class="zone-status">No zone drawn</div>
+    <div class="zone-row">
+      <div id="zone-status" class="zone-status">No zone drawn</div>
+      <button id="toggle-zone-vis" class="btn-icon" title="Toggle visibility" disabled>👁</button>
+    </div>
     <button id="clear-zone-btn" class="btn-danger">Clear Zone</button>
   </div>
 </aside>
@@ -480,6 +488,8 @@ const LS = {
   theme:          'ais_theme',
   trackOnly:      'ais_trackOnly',
   mapStyle:       'ais_mapStyle',
+  seamarks:       'ais_seamarksOverlay',
+  geoHidden:      'ais_geofenceHidden',
 };
 
 // ─── App state ────────────────────────────────────────────────────────────────
@@ -697,13 +707,41 @@ function clearGeofence() {
   geofenceLayer   = null;
   geofenceGeoJSON = null;
   localStorage.removeItem(LS.geofence);
+  localStorage.removeItem(LS.geoHidden);
   updateZoneStatus();
 }
 
 function updateZoneStatus() {
   const el = document.getElementById('zone-status');
-  if (geofenceLayer) { el.textContent = 'Zone active ✓'; el.classList.add('active'); }
-  else               { el.textContent = 'No zone drawn'; el.classList.remove('active'); }
+  const btn = document.getElementById('toggle-zone-vis');
+  if (geofenceLayer) {
+    el.textContent = 'Zone active ✓';
+    el.classList.add('active');
+    btn.disabled = false;
+    applyGeofenceVis(btn);
+  } else {
+    el.textContent = 'No zone drawn';
+    el.classList.remove('active');
+    btn.disabled = true;
+    btn.classList.remove('hidden');
+  }
+}
+
+function applyGeofenceVis(btn) {
+  if (!geofenceLayer) return;
+  if (localStorage.getItem(LS.geoHidden) === '1') {
+    geofenceLayer.setStyle({ opacity: 0, fillOpacity: 0 });
+    btn.classList.add('hidden');
+  } else {
+    geofenceLayer.setStyle({ opacity: 1, fillOpacity: 0.2 });
+    btn.classList.remove('hidden');
+  }
+}
+
+function toggleGeofenceVis() {
+  const hidden = localStorage.getItem(LS.geoHidden) !== '1';
+  localStorage.setItem(LS.geoHidden, hidden ? '1' : '0');
+  applyGeofenceVis(document.getElementById('toggle-zone-vis'));
 }
 
 // ─── Alert logic ──────────────────────────────────────────────────────────────
@@ -1031,6 +1069,15 @@ const TILE_LAYERS = {
   }),
 };
 
+const OVERLAY_LAYERS = {
+  'Marine chart': L.tileLayer('https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png', {
+    attribution: '&copy; <a href="https://www.openseamap.org">OpenSeaMap</a> contributors',
+    maxZoom: 18,
+    minZoom: 7,
+    opacity: 1,
+  }),
+};
+
 // ─── Map init ─────────────────────────────────────────────────────────────────
 function initMap() {
   // Pick initial layer: saved preference, or match the app theme
@@ -1042,13 +1089,21 @@ function initMap() {
   map = L.map('map').setView(DEFAULT_CENTER, DEFAULT_ZOOM);
   baseLayer.addTo(map);
 
-  L.control.layers(TILE_LAYERS, null, { position: 'topright', collapsed: true }).addTo(map);
+  if (localStorage.getItem(LS.seamarks) === '1') {
+    OVERLAY_LAYERS['Marine chart'].addTo(map);
+  }
+
+  L.control.layers(TILE_LAYERS, OVERLAY_LAYERS, { position: 'topright', collapsed: true }).addTo(map);
   L.control.scale({ position: 'bottomleft', imperial: true, metric: true, maxWidth: 150 }).addTo(map);
 
   // Persist layer choice on switch
   map.on('baselayerchange', (e) => {
     localStorage.setItem(LS.mapStyle, e.name);
   });
+
+  // Persist overlay toggle
+  map.on('overlayadd',    (e) => { if (e.name === 'Marine chart') localStorage.setItem(LS.seamarks, '1'); });
+  map.on('overlayremove', (e) => { if (e.name === 'Marine chart') localStorage.setItem(LS.seamarks, '0'); });
 
   drawnItems = new L.FeatureGroup().addTo(map);
 
@@ -1142,8 +1197,9 @@ function initUI() {
   document.getElementById('mmsi-add-btn').addEventListener('click', doAddMMSI);
   mmsiInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') doAddMMSI(); });
 
-  // Clear zone
+  // Clear zone & toggle visibility
   document.getElementById('clear-zone-btn').addEventListener('click', clearGeofence);
+  document.getElementById('toggle-zone-vis').addEventListener('click', toggleGeofenceVis);
 
   // Init displays
   renderMMSIList();

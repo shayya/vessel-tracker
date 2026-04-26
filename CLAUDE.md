@@ -188,6 +188,7 @@ Single self-contained file. No build step, no bundler.
 | `ais_geofence` | `null` | `[[lat,lon],...]` of drawn polygon vertices |
 | `ais_theme` | `"system"` | `"dark"` or `"light"` |
 | `ais_mapStyle` | `null` | Selected tile layer name (`"Dark"`, `"Light"`, `"Standard"`, `"Voyager"`, `"Topographic"`) |
+| `ais_seamarksOverlay` | `null` | `"1"` if Marine chart overlay is enabled |
 
 ### Boot sequence
 1. Inline `<script>` at top of `<body>` sets `data-theme` immediately (prevents flash)
@@ -211,6 +212,9 @@ Uses Leaflet's `L.control.layers()` to provide a base layer switcher in the top-
 - Default selection matches the app theme (dark→Dark, light→Light) unless the user has a saved preference in `ais_mapStyle`
 - Layer choice persists in `localStorage`; once manually selected it overrides theme-based auto-switching
 - Theme toggle (☀/☾) auto-switches map style only if no manual preference is saved
+
+### Map overlay layers
+- **Marine chart** — OpenSeaMap seamark overlay (`tiles.openseamap.org/seamark/{z}/{x}/{y}.png`). Transparent tiles rendered on top of any base layer (buoys, lights, harbor features, etc.). Toggled via checkbox in the layer control, persists independently in `ais_seamarksOverlay`. Min zoom 7; tiles are sparse below that.
 
 ### WebSocket keepalive (browser side)
 - `startWSKeepAlive()` runs `setInterval` every 25 s
