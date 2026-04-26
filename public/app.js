@@ -27,11 +27,12 @@ const LS = {
 };
 
 // ─── App state ────────────────────────────────────────────────────────────────
-let map, drawnItems;
+let map, drawnItems, drawControl;
 let ws = null;
 let wsTimer = null;
 let geofenceLayer   = null;
 let geofenceGeoJSON = null;
+let activePopup     = null; // track which sidebar popup is open
 
 const vessels      = new Map(); // mmsi → { marker, name, sog, cog, heading, navStatus, time, lat, lon, lastUpdate, stale }
 const alertTimes   = new Map(); // mmsi → timestamp of last alert
@@ -66,16 +67,13 @@ function currentTheme() { return document.documentElement.getAttribute('data-the
 function applyTheme(t) {
   document.documentElement.setAttribute('data-theme', t);
   localStorage.setItem(LS.theme, t);
-  document.getElementById('theme-btn').textContent = t === 'dark' ? '☀' : '☾';
+  document.getElementById('sidebar-theme').textContent = t === 'dark' ? '☀' : '☾';
   // Auto-switch map style to match theme (respects manual override if saved)
   if (map) {
     const saved = localStorage.getItem(LS.mapStyle);
     if (!saved) {
       const layerId = t === 'light' ? 'Light' : 'Dark';
-      if (TILE_LAYERS[layerId]) {
-        map.removeLayer(Object.values(TILE_LAYERS).find(l => map.hasLayer(l)));
-        TILE_LAYERS[layerId].addTo(map);
-      }
+      switchTileLayer(layerId);
     }
   }
 }
@@ -89,8 +87,6 @@ function esc(s) {
 
 function fmtTime(timeStr) {
   try {
-    // AISStream format: "2024-01-25 01:25:13.750579416 +0000 UTC"
-    // Extract just "YYYY-MM-DD HH:MM:SS" which Date can parse as UTC
     const m = String(timeStr).match(/(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})/);
     if (!m) return timeStr;
     const d = new Date(m[1] + 'T' + m[2] + 'Z');
@@ -124,7 +120,6 @@ function makeIcon(sog, cog, heading, stale, tracked) {
   const circR = tracked ? 6 : 5;
 
   if (sog === 0 || rotation === null) {
-    // Stationary or no heading data → circle
     const d = circR * 2;
     return L.divIcon({
       className: '',
@@ -134,7 +129,6 @@ function makeIcon(sog, cog, heading, stale, tracked) {
     });
   }
 
-  // Arrow pointing north by default, rotated to COG/heading
   const svg = `<svg viewBox="0 0 20 30" xmlns="http://www.w3.org/2000/svg" width="${sz.w}" height="${sz.h}">
     <path d="M10 2 L18 27 L10 21 L2 27 Z" fill="${color}" stroke="rgba(255,255,255,0.85)" stroke-width="1.5" stroke-linejoin="round"/>
   </svg>`;
@@ -191,7 +185,7 @@ function upsertVessel(data) {
     v.marker.setPopupContent(popupHTML(v));
     v.marker.getTooltip().setContent(v.name);
 
-    if (nameChanged) renderMMSIList(); // refresh name in settings
+    if (nameChanged) renderMMSIList();
   } else {
     const v = { mmsi, name: name || mmsi, sog: sog ?? 0, cog: cog ?? 0, heading, navStatus, time, lat: lat ?? 0, lon: lon ?? 0, lastUpdate: Date.now(), stale: false, classB: classB || false };
     const marker = L.marker([v.lat, v.lon], { icon: makeIcon(v.sog, v.cog, v.heading, false, isTracked) });
@@ -219,7 +213,7 @@ function checkStale() {
       v.marker.getTooltip().setContent(v.stale ? `${v.name} (stale)` : v.name);
     }
   });
-  updateStatusBar();
+  updateSidebarStatus();
 }
 
 // ─── Geofence ─────────────────────────────────────────────────────────────────
@@ -227,7 +221,7 @@ function loadGeofence() {
   const raw = localStorage.getItem(LS.geofence);
   if (!raw) return;
   try {
-    const coords  = JSON.parse(raw); // [[lat,lon],...]
+    const coords  = JSON.parse(raw);
     const polygon = L.polygon(coords, { color: '#3388ff', fillOpacity: 0.2, weight: 2 });
     drawnItems.addLayer(polygon);
     geofenceLayer   = polygon;
@@ -298,7 +292,6 @@ function checkAlert(mmsi) {
   const body = `⚠️ ${v.name} (${mmsi}) at ${v.sog.toFixed(1)} kts in alert zone. Pos: ${v.lat.toFixed(4)}, ${v.lon.toFixed(4)}. Time: ${v.time || ''}`;
   sendToServer({ type: 'notify', title: 'Vessel Alert', body });
   pushAlertLog(v.name, v.sog, mmsi);
-  flashStatusBar();
 }
 
 function pushAlertLog(name, sog, mmsi) {
@@ -312,31 +305,54 @@ function renderAlertLog() {
     alertLog.map(e => `<div class="alert-entry"><time>${esc(e.time)}</time>${esc(e.text)}</div>`).join('');
 }
 
-function flashStatusBar() {
-  const el = document.getElementById('status-bar');
-  el.classList.remove('flash');
-  void el.offsetWidth;
-  el.classList.add('flash');
-  setTimeout(() => el.classList.remove('flash'), 1800);
-}
-
-// ─── Status bar ───────────────────────────────────────────────────────────────
+// ─── Sidebar status widget ────────────────────────────────────────────────────
 function setStatus(status, text) {
-  const dot   = document.getElementById('status-dot');
-  const label = document.getElementById('status-text');
+  const dot = document.getElementById('status-dot');
   dot.className = 'status-dot ' + status;
-  label.textContent = text || { connected:'Connected to AISStream', reconnecting:'Reconnecting…', disconnected:'Disconnected' }[status] || status;
+  updateSidebarStatus();
 }
 
-function updateStatusBar() {
+function updateSidebarStatus() {
   const tracked = cfg.mmsiList.length;
   const active  = [...vessels.values()].filter(v => !v.stale).length;
-  const el = document.getElementById('vessel-count');
-  if (cfg.trackOnly) {
-    el.textContent = `${tracked} vessel${tracked !== 1 ? 's' : ''} tracked, ${active} active`;
+  document.getElementById('sidebar-count').textContent = `● ${tracked}`;
+  document.getElementById('sidebar-active').textContent = `${active} live`;
+}
+
+// ─── Sidebar popup management ─────────────────────────────────────────────────
+function togglePopup(id) {
+  const popup = document.getElementById(id);
+  if (activePopup === id) {
+    popup.classList.remove('open');
+    activePopup = null;
+    updateSidebarActiveBtn(null);
   } else {
-    el.textContent = `Showing all vessels: ${active} active (${tracked} tracked)`;
+    // Close any open popup
+    document.querySelectorAll('.sidebar-popup.open').forEach(p => p.classList.remove('open'));
+    popup.classList.add('open');
+    activePopup = id;
+    updateSidebarActiveBtn(id);
   }
+}
+
+function updateSidebarActiveBtn(popupId) {
+  document.querySelectorAll('.sidebar-btn').forEach(b => b.classList.remove('active'));
+  if (!popupId) return;
+  const btnMap = { 'popup-maptype': 'sidebar-maptype', 'popup-fleets': 'sidebar-fleets' };
+  const btnId = btnMap[popupId];
+  if (btnId) document.getElementById(btnId).classList.add('active');
+}
+
+function closeAllPopups() {
+  document.querySelectorAll('.sidebar-popup.open').forEach(p => p.classList.remove('open'));
+  activePopup = null;
+  updateSidebarActiveBtn(null);
+}
+
+// ─── Geofence draw from sidebar ───────────────────────────────────────────────
+function startGeofenceDraw() {
+  closeAllPopups();
+  new L.Draw.Polygon(map, drawControl.options.draw.polygon).enable();
 }
 
 // ─── WebSocket to relay server ────────────────────────────────────────────────
@@ -352,7 +368,7 @@ function startWSKeepAlive() {
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: 'ping' }));
     } else if (!ws || ws.readyState === WebSocket.CLOSED) {
-      initWS(); // relay dropped — reconnect immediately
+      initWS();
     }
   }, 25_000);
 }
@@ -373,14 +389,14 @@ function initWS() {
     try { msg = JSON.parse(e.data); } catch { return; }
 
     if (msg.type === 'pong') {
-      return; // keepalive ack — nothing to do
+      return;
     } else if (msg.type === 'status') {
       setStatus(msg.status);
     } else if (msg.type === 'error') {
       setStatus('disconnected', `Error: ${msg.message}`);
     } else if (msg.type === 'snapshot') {
       msg.vessels.forEach(v => upsertVessel(v));
-      updateStatusBar();
+      updateSidebarStatus();
     } else if (msg.MessageType) {
       handleAisMessage(msg);
     }
@@ -392,10 +408,9 @@ function initWS() {
     wsTimer = setTimeout(initWS, 3000);
   };
 
-  ws.onerror = () => {}; // onclose fires after
+  ws.onerror = () => {};
 }
 
-// When the user switches back to this tab, verify the connection is still live.
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') {
     if (!ws || ws.readyState !== WebSocket.OPEN) {
@@ -485,7 +500,7 @@ function handleAisMessage(msg) {
   }
 
   checkAlert(mmsi);
-  updateStatusBar();
+  updateSidebarStatus();
 }
 
 // ─── Settings UI ──────────────────────────────────────────────────────────────
@@ -521,12 +536,10 @@ function doAddMMSI() {
   cfg.mmsiList.push(mmsi);
   saveSettings();
   renderMMSIList();
-  updateStatusBar();
-  // Refresh icons for newly tracked vessel
+  updateSidebarStatus();
   const v = vessels.get(mmsi);
   if (v) {
     v.marker.setIcon(makeIcon(v.sog, v.cog, v.heading, v.stale, true));
-    // Upgrade tooltip to permanent
     v.marker.unbindTooltip();
     v.marker.bindTooltip(v.name, { permanent: true, direction: 'right', className: 'vessel-label', offset: [10, 0] });
   }
@@ -539,7 +552,6 @@ function doRemoveMMSI(mmsi) {
   if (cfg.trackOnly) {
     removeVesselFromMap(mmsi);
   } else {
-    // Downgrade icon and tooltip for untracked vessel
     const v = vessels.get(mmsi);
     if (v) {
       v.marker.setIcon(makeIcon(v.sog, v.cog, v.heading, v.stale, false));
@@ -548,101 +560,105 @@ function doRemoveMMSI(mmsi) {
     }
   }
   renderMMSIList();
-  updateStatusBar();
+  updateSidebarStatus();
 }
 
 function toggleTrackOnly() {
   cfg.trackOnly = !cfg.trackOnly;
   saveSettings();
-  updateTrackToggle();
+  // Update checkbox in popup
+  document.getElementById('show-all-vessels').checked = !cfg.trackOnly;
   if (cfg.trackOnly) {
-    // Remove non-tracked vessels from the map
     vessels.forEach((v, mmsi) => {
       if (!cfg.mmsiList.includes(mmsi)) removeVesselFromMap(mmsi);
     });
   }
-  updateStatusBar();
+  updateSidebarStatus();
 }
 
-function updateTrackToggle() {
-  const btn = document.getElementById('track-toggle');
-  if (cfg.trackOnly) {
-    btn.textContent = '◎';
-    btn.title = 'Tracking: show tracked vessels only';
-    btn.classList.remove('active');
-  } else {
-    btn.textContent = '◉';
-    btn.title = 'Tracking: show all vessels in area';
-    btn.classList.add('active');
-  }
-}
-
-function openSettings()  { document.getElementById('settings-panel').classList.add('open'); document.getElementById('settings-overlay').classList.add('open'); map.invalidateSize(); }
+function openSettings()  { closeAllPopups(); document.getElementById('settings-panel').classList.add('open'); document.getElementById('settings-overlay').classList.add('open'); map.invalidateSize(); }
 function closeSettings() { document.getElementById('settings-panel').classList.remove('open'); document.getElementById('settings-overlay').classList.remove('open'); map.invalidateSize(); }
 
 // ─── Tile layers ──────────────────────────────────────────────────────────────
 const TILE_LAYERS = {
-  'Standard': L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution: '&copy; <a href="https://openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-    maxZoom: 19,
+  'Light': L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+    attribution: '&copy; <a href="https://openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>',
+    maxZoom: 20,
   }),
   'Dark': L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
     attribution: '&copy; <a href="https://openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>',
     maxZoom: 20,
   }),
-  'Light': L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-    attribution: '&copy; <a href="https://openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>',
-    maxZoom: 20,
-  }),
-  'Voyager': L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-    attribution: '&copy; <a href="https://openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>',
-    maxZoom: 20,
-  }),
-  'Topographic': L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
-    attribution: '&copy; <a href="https://openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://opentopomap.org">OpenTopoMap</a>',
-    maxZoom: 17,
+  'Satellite': L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+    attribution: '&copy; Esri',
+    maxZoom: 19,
   }),
 };
 
-const OVERLAY_LAYERS = {
-  'Marine chart': L.tileLayer('https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png', {
-    attribution: '&copy; <a href="https://www.openseamap.org">OpenSeaMap</a> contributors',
-    maxZoom: 18,
-    minZoom: 7,
-    opacity: 1,
-  }),
-};
+let currentTileLayer = null;
+
+function switchTileLayer(name) {
+  const layer = TILE_LAYERS[name];
+  if (!layer) return;
+  if (currentTileLayer && map.hasLayer(currentTileLayer)) {
+    map.removeLayer(currentTileLayer);
+  }
+  layer.addTo(map);
+  currentTileLayer = layer;
+  localStorage.setItem(LS.mapStyle, name);
+  // Sync the radio button
+  const radio = document.querySelector(`input[name="mapstyle"][value="${name}"]`);
+  if (radio) radio.checked = true;
+}
+
+const SEAMARKS_LAYER = L.tileLayer('https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png', {
+  attribution: '&copy; <a href="https://www.openseamap.org">OpenSeaMap</a> contributors',
+  maxZoom: 18,
+  minZoom: 7,
+  opacity: 1,
+});
+
+let seamarksActive = false;
+
+function toggleSeamarks(on) {
+  if (on && !seamarksActive) {
+    SEAMARKS_LAYER.addTo(map);
+    seamarksActive = true;
+  } else if (!on && seamarksActive) {
+    map.removeLayer(SEAMARKS_LAYER);
+    seamarksActive = false;
+  }
+  localStorage.setItem(LS.seamarks, on ? '1' : '0');
+  document.getElementById('sidebar-anchor').classList.toggle('active', on);
+}
 
 // ─── Map init ─────────────────────────────────────────────────────────────────
 function initMap() {
-  // Pick initial layer: saved preference, or match the app theme
+  // Resolve initial layer — fall back to Light/Dark by theme if saved value was removed
   const saved   = localStorage.getItem(LS.mapStyle);
   const themeId = currentTheme();
-  const defaultId = saved || (themeId === 'light' ? 'Light' : 'Dark');
-  const baseLayer = TILE_LAYERS[defaultId] || TILE_LAYERS['Dark'];
-
-  map = L.map('map').setView(DEFAULT_CENTER, DEFAULT_ZOOM);
-  baseLayer.addTo(map);
-
-  if (localStorage.getItem(LS.seamarks) === '1') {
-    OVERLAY_LAYERS['Marine chart'].addTo(map);
+  let layerId   = saved || (themeId === 'light' ? 'Light' : 'Dark');
+  // If saved value is one of the removed layers, fall back
+  if (!TILE_LAYERS[layerId]) {
+    layerId = themeId === 'light' ? 'Light' : 'Dark';
+    localStorage.removeItem(LS.mapStyle);
   }
 
-  L.control.layers(TILE_LAYERS, OVERLAY_LAYERS, { position: 'topright', collapsed: true }).addTo(map);
+  map = L.map('map').setView(DEFAULT_CENTER, DEFAULT_ZOOM);
+  switchTileLayer(layerId);
+
+  // Restore seamarks
+  if (localStorage.getItem(LS.seamarks) === '1') {
+    SEAMARKS_LAYER.addTo(map);
+    seamarksActive = true;
+    document.getElementById('sidebar-anchor').classList.add('active');
+  }
+
   L.control.scale({ position: 'bottomleft', imperial: true, metric: true, maxWidth: 150 }).addTo(map);
-
-  // Persist layer choice on switch
-  map.on('baselayerchange', (e) => {
-    localStorage.setItem(LS.mapStyle, e.name);
-  });
-
-  // Persist overlay toggle
-  map.on('overlayadd',    (e) => { if (e.name === 'Marine chart') localStorage.setItem(LS.seamarks, '1'); });
-  map.on('overlayremove', (e) => { if (e.name === 'Marine chart') localStorage.setItem(LS.seamarks, '0'); });
 
   drawnItems = new L.FeatureGroup().addTo(map);
 
-  const drawControl = new L.Control.Draw({
+  drawControl = new L.Control.Draw({
     position: 'topright',
     draw: {
       polygon:     { shapeOptions: { color: '#3388ff', fillOpacity: 0.2, weight: 2 } },
@@ -681,16 +697,65 @@ function initMap() {
 function initUI() {
   // Theme
   applyTheme(currentTheme());
-  document.getElementById('theme-btn').addEventListener('click', () => applyTheme(currentTheme() === 'dark' ? 'light' : 'dark'));
+  document.getElementById('sidebar-theme').addEventListener('click', () => applyTheme(currentTheme() === 'dark' ? 'light' : 'dark'));
 
   // Settings panel
-  document.getElementById('settings-btn').addEventListener('click', openSettings);
+  document.getElementById('sidebar-settings').addEventListener('click', openSettings);
   document.getElementById('settings-close').addEventListener('click', closeSettings);
   document.getElementById('settings-overlay').addEventListener('click', closeSettings);
 
-  // Track toggle
-  updateTrackToggle();
-  document.getElementById('track-toggle').addEventListener('click', toggleTrackOnly);
+  // Sidebar popups
+  document.getElementById('sidebar-maptype').addEventListener('click', () => togglePopup('popup-maptype'));
+  document.getElementById('sidebar-fleets').addEventListener('click', () => togglePopup('popup-fleets'));
+
+  // Close popups on outside click
+  document.addEventListener('click', (e) => {
+    if (activePopup && !e.target.closest('.sidebar-popup') && !e.target.closest('.sidebar-btn')) {
+      closeAllPopups();
+    }
+  });
+
+  // Map type popup — radio buttons
+  document.querySelectorAll('input[name="mapstyle"]').forEach(radio => {
+    radio.addEventListener('change', () => switchTileLayer(radio.value));
+  });
+  // Sync radio to current layer
+  const currentStyle = localStorage.getItem(LS.mapStyle) || (currentTheme() === 'light' ? 'Light' : 'Dark');
+  const initialRadio = document.querySelector(`input[name="mapstyle"][value="${TILE_LAYERS[currentStyle] ? currentStyle : (currentTheme() === 'light' ? 'Light' : 'Dark')}"]`);
+  if (initialRadio) initialRadio.checked = true;
+
+  // Nautical chart checkbox
+  const seamarksCheck = document.getElementById('seamarks-check');
+  seamarksCheck.checked = seamarksActive;
+  seamarksCheck.addEventListener('change', () => toggleSeamarks(seamarksCheck.checked));
+
+  // Anchor button toggles seamarks directly
+  document.getElementById('sidebar-anchor').addEventListener('click', () => {
+    seamarksCheck.checked = !seamarksCheck.checked;
+    toggleSeamarks(seamarksCheck.checked);
+  });
+
+  // Geofence draw
+  document.getElementById('sidebar-draw').addEventListener('click', startGeofenceDraw);
+
+  // Heart popup — "Show other vessels" toggle
+  const showAllCheck = document.getElementById('show-all-vessels');
+  showAllCheck.checked = !cfg.trackOnly;
+  showAllCheck.addEventListener('change', () => {
+    cfg.trackOnly = !showAllCheck.checked;
+    saveSettings();
+    if (cfg.trackOnly) {
+      vessels.forEach((v, mmsi) => {
+        if (!cfg.mmsiList.includes(mmsi)) removeVesselFromMap(mmsi);
+      });
+    }
+    updateSidebarStatus();
+  });
+
+  // MMSI add (in popup)
+  const mmsiInput = document.getElementById('mmsi-input');
+  document.getElementById('mmsi-add-btn').addEventListener('click', doAddMMSI);
+  mmsiInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') doAddMMSI(); });
 
   // API key
   const apiInput = document.getElementById('api-key-input');
@@ -701,11 +766,6 @@ function initUI() {
     reconfigure();
   });
 
-  // Max vessels
-  const maxSel = document.getElementById('max-vessels-select');
-  maxSel.value = String(cfg.maxVessels);
-  maxSel.addEventListener('change', () => { cfg.maxVessels = parseInt(maxSel.value); saveSettings(); });
-
   // Speed threshold
   const speedIn = document.getElementById('speed-threshold');
   speedIn.value = cfg.speedThreshold;
@@ -714,7 +774,6 @@ function initUI() {
     if (!isNaN(v) && v >= 0) {
       cfg.speedThreshold = v;
       saveSettings();
-      // Refresh all marker colours
       vessels.forEach((vessel, mmsi) => vessel.marker.setIcon(makeIcon(vessel.sog, vessel.cog, vessel.heading, vessel.stale, cfg.mmsiList.includes(mmsi))));
     }
   });
@@ -727,11 +786,6 @@ function initUI() {
     if (!isNaN(v) && v >= 1) { cfg.alertCooldown = v; saveSettings(); }
   });
 
-  // MMSI add
-  const mmsiInput = document.getElementById('mmsi-input');
-  document.getElementById('mmsi-add-btn').addEventListener('click', doAddMMSI);
-  mmsiInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') doAddMMSI(); });
-
   // Clear zone & toggle visibility
   document.getElementById('clear-zone-btn').addEventListener('click', clearGeofence);
   document.getElementById('toggle-zone-vis').addEventListener('click', toggleGeofenceVis);
@@ -739,7 +793,7 @@ function initUI() {
   // Init displays
   renderMMSIList();
   updateZoneStatus();
-  updateStatusBar();
+  updateSidebarStatus();
 }
 
 // ─── Seed settings from server .env (only if not already saved locally) ───────
@@ -762,7 +816,7 @@ async function seedFromDefaults() {
 
 // ─── Boot ─────────────────────────────────────────────────────────────────────
 window.addEventListener('DOMContentLoaded', async () => {
-  await seedFromDefaults(); // populate cfg from .env before UI init
+  await seedFromDefaults();
   initMap();
   initUI();
   setStatus('disconnected');

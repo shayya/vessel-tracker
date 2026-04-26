@@ -38,51 +38,28 @@ html, body {
 
 body { display: flex; flex-direction: column; }
 
-/* ─── Header ────────────────────────────────────────────────── */
-#header {
-  height: 48px;
-  background: var(--panel);
-  border-bottom: 1px solid var(--panel-border);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 16px;
-  flex-shrink: 0;
-  position: relative;
-  z-index: 100;
+/* ─── Map ────────────────────────────────────────────────────── */
+#map { flex: 1; min-height: 0; }
+
+/* Hide default Leaflet layer switcher and draw toolbar */
+.leaflet-control-layers,
+.leaflet-draw { display: none !important; }
+
+.leaflet-control-scale-line {
+  background: transparent !important;
+  border-color: #000 !important;
+  color: #000 !important;
+  text-shadow: none !important;
+  font-size: 11px;
+  margin-bottom: 0 !important;
 }
 
-.app-title {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--accent);
-  letter-spacing: -0.01em;
-}
-
-.header-right { display: flex; align-items: center; gap: 8px; }
-
-.icon-btn {
-  background: none;
-  border: 1px solid var(--border);
-  color: var(--text);
-  width: 32px;
-  height: 32px;
-  border-radius: 6px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 15px;
-  transition: background 0.15s, border-color 0.15s;
-  flex-shrink: 0;
-}
-.icon-btn:hover { background: var(--border); border-color: var(--accent); }
-.icon-btn.active { border-color: var(--accent); color: var(--accent); }
+.leaflet-control-attribution { display: none !important; }
 
 /* ─── Status dot ─────────────────────────────────────────────── */
 .status-dot {
-  width: 9px;
-  height: 9px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   flex-shrink: 0;
   transition: background 0.3s;
@@ -93,60 +70,136 @@ body { display: flex; flex-direction: column; }
 
 @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
 
-/* ─── Map ────────────────────────────────────────────────────── */
-#map { flex: 1; min-height: 0; }
-
-/* Layer switcher — keep it above the draw toolbar */
-.leaflet-control-layers {
-  border-radius: 6px !important;
-  margin-right: 0 !important;
-  margin-bottom: 32px !important;
-  font-family: 'Inter', sans-serif !important;
-  font-size: 12px !important;
-}
-.leaflet-control-layers-list { padding: 4px 0 !important; }
-.leaflet-control-layers-selector { margin-right: 5px; }
-
-/* ─── Status bar ─────────────────────────────────────────────── */
-#status-bar {
-  background: rgba(15, 23, 42, 0.94);
-  backdrop-filter: blur(8px);
-  border-top: 1px solid var(--panel-border);
-  padding: 6px 16px 8px;
-  flex-shrink: 0;
-  z-index: 100;
-}
-
-[data-theme="light"] #status-bar { background: rgba(248,250,252,0.95); }
-
-.status-meta {
+/* ─── Sidebar ───────────────────────────────────────────────── */
+#sidebar {
+  position: fixed;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 900;
   display: flex;
-  gap: 16px;
-  font-size: 12px;
-  color: var(--text-muted);
-  margin-bottom: 4px;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
 }
 
-#alert-log {
+.sidebar-buttons {
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  padding: 6px;
   display: flex;
   flex-direction: column;
   gap: 2px;
-  max-height: 66px;
+  box-shadow: var(--shadow);
+}
+
+.sidebar-btn {
+  background: none;
+  border: none;
+  color: var(--text);
+  width: 38px;
+  height: 38px;
+  border-radius: 8px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 17px;
+  transition: background 0.15s;
+}
+.sidebar-btn:hover { background: var(--border); }
+.sidebar-btn.active { background: var(--border); color: var(--accent); }
+
+.sidebar-status {
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  padding: 5px 8px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--text-muted);
+  box-shadow: var(--shadow);
+}
+
+#sidebar-count { font-weight: 600; color: var(--text); }
+#sidebar-active { color: var(--text-muted); }
+
+/* ─── Sidebar popups ────────────────────────────────────────── */
+.sidebar-popup {
+  display: none;
+  position: fixed;
+  right: 62px;
+  z-index: 950;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  padding: 14px;
+  box-shadow: var(--shadow);
+  min-width: 200px;
+}
+.sidebar-popup.open { display: block; }
+
+#popup-maptype {
+  top: 50%;
+  transform: translateY(-70%);
+}
+
+#popup-fleets {
+  top: 50%;
+  transform: translateY(-40%);
+}
+
+.popup-title {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  margin-bottom: 10px;
+}
+
+.popup-radio,
+.popup-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  padding: 4px 0;
+  cursor: pointer;
+  color: var(--text);
+}
+
+.popup-toggle-row { margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
+
+.popup-add-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.popup-add-row input {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 6px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+}
+.popup-add-row input:focus { border-color: var(--accent); }
+
+.popup-mmsi-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 220px;
   overflow-y: auto;
 }
-
-.alert-entry {
-  font-size: 11px;
-  color: var(--warning);
-  line-height: 1.5;
-}
-.alert-entry time { color: var(--text-muted); margin-right: 6px; }
-
-@keyframes status-flash {
-  0%,100% { background: transparent; }
-  40%      { background: rgba(245,158,11,0.18); }
-}
-#status-bar.flash { animation: status-flash 0.55s ease 3; }
 
 /* ─── Settings overlay + panel ───────────────────────────────── */
 #settings-overlay {
@@ -160,13 +213,14 @@ body { display: flex; flex-direction: column; }
 
 #settings-panel {
   position: fixed;
-  top: 0; right: 0; bottom: 0;
+  top: 0; right: 56px; bottom: 0;
   width: 320px;
   background: var(--panel);
   border-left: 1px solid var(--panel-border);
+  border-right: 1px solid var(--panel-border);
   box-shadow: var(--shadow);
   z-index: 1000;
-  transform: translateX(100%);
+  transform: translateX(calc(100% + 56px));
   transition: transform 0.25s ease;
   display: flex;
   flex-direction: column;
@@ -268,9 +322,25 @@ input:focus, select:focus { border-color: var(--accent); }
 }
 .btn-danger:hover { background: rgba(239,68,68,0.1); }
 
-/* ─── MMSI list ──────────────────────────────────────────────── */
-#mmsi-list { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
+.icon-btn {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text);
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  transition: background 0.15s, border-color 0.15s;
+  flex-shrink: 0;
+}
+.icon-btn:hover { background: var(--border); border-color: var(--accent); }
+.icon-btn.active { border-color: var(--accent); color: var(--accent); }
 
+/* ─── MMSI list ──────────────────────────────────────────────── */
 .mmsi-item {
   display: flex;
   align-items: center;
@@ -314,6 +384,30 @@ input:focus, select:focus { border-color: var(--accent); }
 .btn-icon:hover { background: var(--border); }
 .btn-icon.hidden { opacity: 0.45; }
 
+/* ─── Alert log (in settings panel) ──────────────────────────── */
+#alert-log {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 120px;
+  overflow-y: auto;
+}
+#alert-log:empty::after {
+  content: 'No alerts yet';
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: center;
+  padding: 8px 0;
+}
+
+.alert-entry {
+  font-size: 11px;
+  color: var(--warning);
+  line-height: 1.5;
+  padding: 3px 0;
+}
+.alert-entry time { color: var(--text-muted); margin-right: 6px; }
+
 /* ─── Vessel tooltip label ───────────────────────────────────── */
 .vessel-label {
   background: transparent !important;
@@ -333,19 +427,10 @@ input:focus, select:focus { border-color: var(--accent); }
 }
 .vessel-label::before { display: none !important; }
 
-/* ─── Map scale ruler ────────────────────────────────────────── */
-.leaflet-control-scale-line {
-  background: transparent !important;
-  border-color: #000 !important;
-  color: #000 !important;
-  text-shadow: none !important;
-  font-size: 11px;
-  margin-bottom: 0 !important;
-}
-
-.leaflet-control-attribution { display: none !important; }
-
 /* ─── Responsive ─────────────────────────────────────────────── */
 @media (max-width: 767px) {
-  #settings-panel { width: 100%; }
+  #settings-panel { width: 100%; right: 0; }
+  #settings-panel.open { transform: translateX(0); }
+  #sidebar { right: 6px; }
+  .sidebar-popup { right: 52px; }
 }

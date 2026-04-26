@@ -23,17 +23,6 @@
 })();
 </script>
 
-<!-- ─── Header ────────────────────────────────────────────────── -->
-<header id="header">
-  <span class="app-title">Vessel Tracker</span>
-  <div class="header-right">
-    <div id="status-dot" class="status-dot disconnected" title="Connection status"></div>
-    <button id="track-toggle" class="icon-btn" title="Toggle tracked / all vessels">◎</button>
-    <button id="theme-btn"    class="icon-btn" title="Toggle theme">☀</button>
-    <button id="settings-btn" class="icon-btn" title="Settings">⚙</button>
-  </div>
-</header>
-
 <!-- ─── Settings ─────────────────────────────────────────────── -->
 <div id="settings-overlay"></div>
 <aside id="settings-panel">
@@ -45,28 +34,6 @@
   <div class="settings-section">
     <h3>AISStream API Key</h3>
     <input type="password" id="api-key-input" placeholder="Paste your API key…" autocomplete="off">
-  </div>
-
-  <div class="settings-section">
-    <h3>Tracked Vessels</h3>
-    <div class="input-row">
-      <input type="text" id="mmsi-input" placeholder="9-digit MMSI…" maxlength="9" inputmode="numeric">
-      <button id="mmsi-add-btn" class="btn-primary">Add</button>
-    </div>
-    <div class="inline-row">
-      <label>Max vessels:</label>
-      <select id="max-vessels-select">
-        <option value="3">3</option>
-        <option value="4">4</option>
-        <option value="5" selected>5</option>
-        <option value="6">6</option>
-        <option value="7">7</option>
-        <option value="8">8</option>
-        <option value="9">9</option>
-        <option value="10">10</option>
-      </select>
-    </div>
-    <div id="mmsi-list"></div>
   </div>
 
   <div class="settings-section">
@@ -89,19 +56,53 @@
     </div>
     <button id="clear-zone-btn" class="btn-danger">Clear Zone</button>
   </div>
+
+  <div class="settings-section">
+    <h3>Recent Alerts</h3>
+    <div id="alert-log"></div>
+  </div>
 </aside>
+
+<!-- ─── Sidebar ──────────────────────────────────────────────── -->
+<aside id="sidebar">
+  <div class="sidebar-buttons">
+    <button id="sidebar-maptype"  class="sidebar-btn" title="Map type">🗺</button>
+    <button id="sidebar-fleets"   class="sidebar-btn" title="Tracked vessels">❤</button>
+    <button id="sidebar-anchor"   class="sidebar-btn" title="Marine chart toggle">⚓</button>
+    <button id="sidebar-draw"     class="sidebar-btn" title="Draw geofence">✏</button>
+    <button id="sidebar-theme"    class="sidebar-btn" title="Toggle theme">☀</button>
+    <button id="sidebar-settings" class="sidebar-btn" title="Settings">⚙</button>
+  </div>
+  <div class="sidebar-status">
+    <span id="status-dot" class="status-dot disconnected"></span>
+    <span id="sidebar-count">● 0</span>
+    <span id="sidebar-active">0 live</span>
+  </div>
+</aside>
+
+<!-- ─── Sidebar popups ───────────────────────────────────────── -->
+<div class="sidebar-popup" id="popup-maptype">
+  <div class="popup-title">Map Type</div>
+  <label class="popup-radio"><input type="radio" name="mapstyle" value="Light"> Light</label>
+  <label class="popup-radio"><input type="radio" name="mapstyle" value="Dark"> Dark</label>
+  <label class="popup-radio"><input type="radio" name="mapstyle" value="Satellite"> Satellite</label>
+  <label class="popup-check"><input type="checkbox" id="seamarks-check"> Nautical chart</label>
+</div>
+
+<div class="sidebar-popup" id="popup-fleets">
+  <div class="popup-title">Tracked Vessels</div>
+  <div class="popup-toggle-row">
+    <label class="popup-check"><input type="checkbox" id="show-all-vessels"> Show other vessels</label>
+  </div>
+  <div class="popup-add-row">
+    <input type="text" id="mmsi-input" placeholder="9-digit MMSI…" maxlength="9" inputmode="numeric">
+    <button id="mmsi-add-btn" class="btn-primary">Add</button>
+  </div>
+  <div id="mmsi-list" class="popup-mmsi-list"></div>
+</div>
 
 <!-- ─── Map ───────────────────────────────────────────────────── -->
 <div id="map"></div>
-
-<!-- ─── Status bar ───────────────────────────────────────────── -->
-<footer id="status-bar">
-  <div class="status-meta">
-    <span id="status-text">Connecting…</span>
-    <span id="vessel-count">0 vessels tracked</span>
-  </div>
-  <div id="alert-log"></div>
-</footer>
 
 <!-- ─── CDN Scripts ───────────────────────────────────────────── -->
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
