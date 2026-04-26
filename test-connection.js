@@ -63,6 +63,11 @@ ws.on('message', (data) => {
   let msg;
   try { msg = JSON.parse(data.toString()); } catch { return; }
 
+  if (msg.type === 'snapshot') {
+    console.log(`[SNAP] Received snapshot with ${msg.vessels.length} cached vessel(s)`);
+    return;
+  }
+
   if (msg.type === 'status') {
     if (msg.status === 'connected') {
       gotConnected = true;
@@ -75,11 +80,17 @@ ws.on('message', (data) => {
     clearTimeout(timer);
     ws.close();
     process.exit(1);
-  } else if (msg.MessageType === 'PositionReport') {
+  } else if (msg.MessageType) {
     positionCount++;
     const meta = msg.MetaData;
-    const pos  = msg.Message.PositionReport;
-    console.log(`[POS] ${(meta.ShipName || '').trim() || meta.MMSI} — MMSI ${meta.MMSI} — ${pos.Sog} kts @ ${meta.latitude.toFixed(4)}, ${meta.longitude.toFixed(4)}`);
+    const posType = msg.MessageType;
+    const pos = msg.Message?.[posType];
+    const name = (meta?.ShipName || '').trim() || meta?.MMSI || '?';
+    const mmsi = meta?.MMSI || '?';
+    const sog = pos?.Sog;
+    const lat = meta?.latitude;
+    const lon = meta?.longitude;
+    console.log(`[POS] ${name} — MMSI ${mmsi} — ${sog} kts @ ${lat?.toFixed(4)}, ${lon?.toFixed(4)} (${posType})`);
     if (positionCount >= 3) {
       console.log(`\nOK — received ${positionCount} position report(s). All systems go.\n`);
       clearTimeout(timer);

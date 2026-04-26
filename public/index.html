@@ -340,6 +340,16 @@ input:focus, select:focus { border-color: var(--accent); }
 }
 .vessel-label::before { display: none !important; }
 
+/* ─── Map scale ruler ────────────────────────────────────────── */
+.leaflet-control-scale-line {
+  background: transparent !important;
+  border-color: #000 !important;
+  color: #000 !important;
+  text-shadow: none !important;
+  font-size: 11px;
+  margin-bottom: 0 !important;
+}
+
 /* ─── Responsive ─────────────────────────────────────────────── */
 @media (max-width: 767px) {
   #settings-panel { width: 100%; }
@@ -489,7 +499,7 @@ function loadSettings() {
     maxVessels:     parseInt(localStorage.getItem(LS.maxVessels)     || '5'),
     speedThreshold: parseFloat(localStorage.getItem(LS.speedThreshold) || '2.0'),
     alertCooldown:  parseInt(localStorage.getItem(LS.alertCooldown)  || '30'),
-    trackOnly:      localStorage.getItem(LS.trackOnly) !== 'false',
+    trackOnly:      localStorage.getItem(LS.trackOnly) === 'true',
   };
 }
 
@@ -545,31 +555,42 @@ function effectiveRotation(heading, cog) {
   return null;
 }
 
-function makeIcon(sog, cog, heading, stale) {
+function makeIcon(sog, cog, heading, stale, tracked) {
   const rotation = effectiveRotation(heading, cog);
-  const slow     = sog <= cfg.speedThreshold;
-  const color    = stale ? '#64748b' : (slow ? '#ef4444' : '#22c55e');
+  let color;
+  if (stale) {
+    color = '#64748b';
+  } else if (tracked) {
+    const slow = sog <= cfg.speedThreshold;
+    color = slow ? '#ef4444' : '#22c55e';
+  } else {
+    color = '#3b82f6'; // blue for non-tracked vessels
+  }
+
+  const sz = tracked ? { w: 24, h: 36 } : { w: 16, h: 24 };
+  const circR = tracked ? 6 : 5;
 
   if (sog === 0 || rotation === null) {
     // Stationary or no heading data → circle
+    const d = circR * 2;
     return L.divIcon({
       className: '',
-      html: `<div style="width:12px;height:12px;border-radius:50%;background:${color};border:2px solid rgba(255,255,255,0.85);box-shadow:0 1px 4px rgba(0,0,0,0.6);"></div>`,
-      iconSize:   [12, 12],
-      iconAnchor: [6, 6],
+      html: `<div style="width:${d}px;height:${d}px;border-radius:50%;background:${color};border:2px solid rgba(255,255,255,0.85);box-shadow:0 1px 4px rgba(0,0,0,0.6);"></div>`,
+      iconSize:   [d, d],
+      iconAnchor: [circR, circR],
     });
   }
 
   // Arrow pointing north by default, rotated to COG/heading
-  const svg = `<svg viewBox="0 0 20 30" xmlns="http://www.w3.org/2000/svg" width="20" height="30">
+  const svg = `<svg viewBox="0 0 20 30" xmlns="http://www.w3.org/2000/svg" width="${sz.w}" height="${sz.h}">
     <path d="M10 2 L18 27 L10 21 L2 27 Z" fill="${color}" stroke="rgba(255,255,255,0.85)" stroke-width="1.5" stroke-linejoin="round"/>
   </svg>`;
 
   return L.divIcon({
     className: '',
-    html: `<div style="width:20px;height:30px;transform:rotate(${rotation}deg);transform-origin:10px 15px;">${svg}</div>`,
-    iconSize:   [20, 30],
-    iconAnchor: [10, 15],
+    html: `<div style="width:${sz.w}px;height:${sz.h}px;transform:rotate(${rotation}deg);transform-origin:${sz.w/2}px ${sz.h/2}px;">${svg}</div>`,
+    iconSize:   [sz.w, sz.h],
+    iconAnchor: [sz.w/2, sz.h/2],
   });
 }
 
@@ -594,28 +615,34 @@ function popupHTML(v) {
 
 // ─── Vessel management ────────────────────────────────────────────────────────
 function upsertVessel(data) {
-  const { mmsi, name, lat, lon, sog, cog, heading, navStatus, time } = data;
+  const { mmsi, name, lat, lon, sog, cog, heading, navStatus, time, classB } = data;
+  const isTracked = cfg.mmsiList.includes(mmsi);
 
   if (vessels.has(mmsi)) {
     const v = vessels.get(mmsi);
     const nameChanged = name && name !== mmsi && name !== v.name;
     v.name      = name || v.name;
-    v.sog       = sog;    v.cog    = cog;
-    v.heading   = heading; v.navStatus = navStatus;
-    v.time      = time;   v.lat    = lat; v.lon = lon;
+    if (sog !== undefined) v.sog = sog;
+    if (cog !== undefined) v.cog = cog;
+    if (heading !== undefined) v.heading = heading;
+    if (navStatus !== undefined) v.navStatus = navStatus;
+    v.time      = time || v.time;
+    if (lat !== undefined) v.lat = lat;
+    if (lon !== undefined) v.lon = lon;
     v.lastUpdate = Date.now();
     v.stale     = false;
+    v.classB    = classB || v.classB;
 
-    v.marker.setLatLng([lat, lon]);
-    v.marker.setIcon(makeIcon(sog, cog, heading, false));
+    v.marker.setLatLng([v.lat, v.lon]);
+    v.marker.setIcon(makeIcon(v.sog, v.cog, v.heading, false, isTracked));
     v.marker.setPopupContent(popupHTML(v));
     v.marker.getTooltip().setContent(v.name);
 
     if (nameChanged) renderMMSIList(); // refresh name in settings
   } else {
-    const v = { mmsi, name: name || mmsi, sog, cog, heading, navStatus, time, lat, lon, lastUpdate: Date.now(), stale: false };
-    const marker = L.marker([lat, lon], { icon: makeIcon(sog, cog, heading, false) });
-    marker.bindTooltip(v.name, { permanent: true, direction: 'right', className: 'vessel-label', offset: [10, 0] });
+    const v = { mmsi, name: name || mmsi, sog: sog ?? 0, cog: cog ?? 0, heading, navStatus, time, lat: lat ?? 0, lon: lon ?? 0, lastUpdate: Date.now(), stale: false, classB: classB || false };
+    const marker = L.marker([v.lat, v.lon], { icon: makeIcon(v.sog, v.cog, v.heading, false, isTracked) });
+    marker.bindTooltip(v.name, { permanent: isTracked, direction: 'right', className: 'vessel-label', offset: [10, 0] });
     marker.bindPopup(popupHTML(v), { maxWidth: 260 });
     marker.addTo(map);
     v.marker = marker;
@@ -631,11 +658,11 @@ function removeVesselFromMap(mmsi) {
 // ─── Stale check ──────────────────────────────────────────────────────────────
 function checkStale() {
   const now = Date.now();
-  vessels.forEach((v) => {
+  vessels.forEach((v, mmsi) => {
     const wasStale = v.stale;
     v.stale = (now - v.lastUpdate) > STALE_MS;
     if (v.stale !== wasStale) {
-      v.marker.setIcon(makeIcon(v.sog, v.cog, v.heading, v.stale));
+      v.marker.setIcon(makeIcon(v.sog, v.cog, v.heading, v.stale, cfg.mmsiList.includes(mmsi)));
       v.marker.getTooltip().setContent(v.stale ? `${v.name} (stale)` : v.name);
     }
   });
@@ -754,7 +781,7 @@ function initWS() {
   ws = new WebSocket(`ws://${location.hostname}:3000`);
 
   ws.onopen = () => {
-    sendToServer({ type:'configure', apiKey: cfg.apiKey, mmsiList: cfg.mmsiList, boundingBox: DEFAULT_BBOX, trackOnly: cfg.trackOnly });
+    sendToServer({ type:'configure', apiKey: cfg.apiKey, mmsiList: cfg.mmsiList, boundingBox: DEFAULT_BBOX });
     setStatus('connected');
     startWSKeepAlive();
   };
@@ -769,8 +796,11 @@ function initWS() {
       setStatus(msg.status);
     } else if (msg.type === 'error') {
       setStatus('disconnected', `Error: ${msg.message}`);
-    } else if (msg.MessageType === 'PositionReport') {
-      handlePositionReport(msg);
+    } else if (msg.type === 'snapshot') {
+      msg.vessels.forEach(v => upsertVessel(v));
+      updateStatusBar();
+    } else if (msg.MessageType) {
+      handleAisMessage(msg);
     }
   };
 
@@ -797,24 +827,81 @@ function reconfigure() {
   sendToServer({ type:'reconfigure', apiKey: cfg.apiKey, mmsiList: cfg.mmsiList, boundingBox: DEFAULT_BBOX, trackOnly: cfg.trackOnly });
 }
 
-// ─── Position report handler ──────────────────────────────────────────────────
-function handlePositionReport(msg) {
+// ─── AIS message handler ──────────────────────────────────────────────────────
+function handleAisMessage(msg) {
   const meta = msg.MetaData;
-  const pos  = msg.Message?.PositionReport;
-  if (!meta || !pos) return;
+  if (!meta) return;
 
   const mmsi = String(meta.MMSI);
-  upsertVessel({
-    mmsi,
-    name:      (meta.ShipName || '').trim() || mmsi,
-    lat:       meta.latitude,
-    lon:       meta.longitude,
-    sog:       pos.Sog,
-    cog:       pos.Cog,
-    heading:   pos.TrueHeading,
-    navStatus: pos.NavigationalStatus,
-    time:      meta.time_utc,
-  });
+  const name = (meta.ShipName || '').trim() || mmsi;
+  const lat  = meta.latitude;
+  const lon  = meta.longitude;
+  const time = meta.time_utc;
+
+  switch (msg.MessageType) {
+    case 'PositionReport': {
+      const pos = msg.Message?.PositionReport;
+      if (!pos) return;
+      upsertVessel({
+        mmsi, name, lat, lon, time,
+        sog:       pos.Sog,
+        cog:       pos.Cog,
+        heading:   pos.TrueHeading,
+        navStatus: pos.NavigationalStatus,
+        classB:    false,
+      });
+      break;
+    }
+    case 'StandardClassBPositionReport': {
+      const pos = msg.Message?.StandardClassBPositionReport;
+      if (!pos) return;
+      upsertVessel({
+        mmsi, name, lat, lon, time,
+        sog:       pos.Sog,
+        cog:       pos.Cog,
+        heading:   pos.TrueHeading,
+        navStatus: undefined,
+        classB:    true,
+      });
+      break;
+    }
+    case 'ExtendedClassBPositionReport': {
+      const pos = msg.Message?.ExtendedClassBPositionReport;
+      if (!pos) return;
+      upsertVessel({
+        mmsi, name, lat, lon, time,
+        sog:       pos.Sog,
+        cog:       pos.Cog,
+        heading:   pos.TrueHeading,
+        navStatus: undefined,
+        classB:    true,
+      });
+      break;
+    }
+    case 'ShipStaticData': {
+      const data = msg.Message?.ShipStaticData;
+      if (!data) return;
+      upsertVessel({
+        mmsi, name, lat, lon, time,
+        sog: undefined, cog: undefined, heading: undefined, navStatus: undefined,
+        classB: false,
+      });
+      break;
+    }
+    case 'StaticDataReport': {
+      const data = msg.Message?.StaticDataReport;
+      if (!data) return;
+      upsertVessel({
+        mmsi, name, lat, lon, time,
+        sog: undefined, cog: undefined, heading: undefined, navStatus: undefined,
+        classB: true,
+      });
+      break;
+    }
+    default:
+      return;
+  }
+
   checkAlert(mmsi);
   updateStatusBar();
 }
@@ -853,17 +940,33 @@ function doAddMMSI() {
   saveSettings();
   renderMMSIList();
   updateStatusBar();
-  reconfigure();
+  // Refresh icons for newly tracked vessel
+  const v = vessels.get(mmsi);
+  if (v) {
+    v.marker.setIcon(makeIcon(v.sog, v.cog, v.heading, v.stale, true));
+    // Upgrade tooltip to permanent
+    v.marker.unbindTooltip();
+    v.marker.bindTooltip(v.name, { permanent: true, direction: 'right', className: 'vessel-label', offset: [10, 0] });
+  }
   input.value = '';
 }
 
 function doRemoveMMSI(mmsi) {
   cfg.mmsiList = cfg.mmsiList.filter(m => m !== mmsi);
   saveSettings();
-  removeVesselFromMap(mmsi);
+  if (cfg.trackOnly) {
+    removeVesselFromMap(mmsi);
+  } else {
+    // Downgrade icon and tooltip for untracked vessel
+    const v = vessels.get(mmsi);
+    if (v) {
+      v.marker.setIcon(makeIcon(v.sog, v.cog, v.heading, v.stale, false));
+      v.marker.unbindTooltip();
+      v.marker.bindTooltip(v.name, { permanent: false, direction: 'right', className: 'vessel-label', offset: [10, 0] });
+    }
+  }
   renderMMSIList();
   updateStatusBar();
-  reconfigure();
 }
 
 function toggleTrackOnly() {
@@ -877,7 +980,6 @@ function toggleTrackOnly() {
     });
   }
   updateStatusBar();
-  reconfigure();
 }
 
 function updateTrackToggle() {
@@ -932,6 +1034,7 @@ function initMap() {
   baseLayer.addTo(map);
 
   L.control.layers(TILE_LAYERS, null, { position: 'topright', collapsed: true }).addTo(map);
+  L.control.scale({ position: 'bottomleft', imperial: true, metric: true, maxWidth: 150 }).addTo(map);
 
   // Persist layer choice on switch
   map.on('baselayerchange', (e) => {
@@ -1013,7 +1116,7 @@ function initUI() {
       cfg.speedThreshold = v;
       saveSettings();
       // Refresh all marker colours
-      vessels.forEach(vessel => vessel.marker.setIcon(makeIcon(vessel.sog, vessel.cog, vessel.heading, vessel.stale)));
+      vessels.forEach((vessel, mmsi) => vessel.marker.setIcon(makeIcon(vessel.sog, vessel.cog, vessel.heading, vessel.stale, cfg.mmsiList.includes(mmsi))));
     }
   });
 

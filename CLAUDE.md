@@ -51,21 +51,22 @@ Defined as `DEFAULT_BBOX` in `public/index.html`. AISStream requires vessels to 
 ## Architecture
 
 ```
-Browser tab
+Browser tab(s)
   │  WebSocket ws://localhost:3000
   ▼
 server.js (Node.js, port 3000)
-  │  Per-client WebSocket connection
+  │  Single shared WebSocket connection
   ▼
 wss://stream.aisstream.io/v0/stream  (AISStream — AIS data source)
 
 server.js also:
   ├── Serves static files from ./public/
   ├── Exposes GET /api/defaults (seeds browser with .env values)
-  └── HTTP POST → https://ntfy.sh/shaya-vessel-alerts  (push notifications)
+  ├── HTTP POST → https://ntfy.sh/shaya-vessel-alerts  (push notifications)
+  └── In-memory vesselCache (Map<mmsi, CachedVessel>) with 30-min eviction
 ```
 
-**Key constraint**: AISStream does not support browser-direct connections (no CORS). The Node.js server is a mandatory relay. Each browser tab gets its own dedicated AISStream WebSocket connection (per-client isolation, not shared).
+**Key constraint**: AISStream does not support browser-direct connections (no CORS). The Node.js server is a mandatory relay. A single shared AISStream WebSocket is maintained at module scope; all browser tabs receive data from it and get an immediate cache snapshot on connect.
 
 ---
 
@@ -96,40 +97,52 @@ vessel-tracker/
 2. Starts HTTP server on `PORT` (default 3000)
 3. Attaches WebSocket server to the same HTTP server
 
-### Per-browser-client lifecycle
-Each browser tab that connects gets a closure with:
-- `aisWs` — the AISStream WebSocket for this client
-- `config` — current API key, MMSI list, bounding box
+### Shared upstream + per-client snapshot
+The server maintains a single module-scoped AISStream connection (`aisWs`) that lives for the process lifetime. All browser tabs are tracked in a `clients` Set and receive broadcast AIS messages.
+
+On connect, each browser client immediately receives a `{type:'snapshot'}` message containing all cached vessels, so the map populates instantly without waiting for the next AIS broadcast.
+
+Module-scoped state:
+- `aisWs` — single AISStream WebSocket, shared across all clients
+- `vesselCache` — Map<mmsi, CachedVessel> with last-known position + static data
+- `clients` — Set of connected browser WebSockets
 - `reconnectTimer` — scheduled reconnect after AISStream drops
-- `reconfTimer` — 300ms debounce for rapid reconfigure messages
 - `heartbeatTimer` / `pongTimer` — keepalive mechanism
-- `alive` — set to false on client disconnect; prevents reconnect loops
+
+Cache eviction: every 60s, entries older than 30 min are dropped.
 
 ### Message types (browser → server)
 | `type` | Action |
 |--------|--------|
-| `configure` | Set config and connect to AISStream for the first time |
-| `reconfigure` | Debounced (300ms) config update + AISStream reconnect |
+| `configure` | Sent on connect; if no upstream exists and `apiKey` is provided, starts the shared AISStream connection |
+| `reconfigure` | No-op (kept for protocol compatibility). The upstream sub never narrows. |
 | `ping` | Keepalive — server replies `{type:"pong"}` |
 | `notify` | Fire ntfy.sh push notification with `title` and `body` |
 
 ### Message types (server → browser)
 | `type` | Meaning |
 |--------|---------|
+| `snapshot` | Sent on connect: `{vessels:[...]}` — full cache of all known vessels |
 | `status` | `"connected"`, `"reconnecting"`, or `"disconnected"` |
 | `error` | AISStream returned an error (e.g., bad API key) |
 | `pong` | Keepalive reply |
-| *(raw AIS JSON)* | Forwarded verbatim; browser detects via `msg.MessageType === "PositionReport"` |
+| *(raw AIS JSON)* | Forwarded verbatim; browser branches on `msg.MessageType` to handle PositionReport, StandardClassBPositionReport, ExtendedClassBPositionReport, ShipStaticData, StaticDataReport |
 
 ### AISStream subscription format
 ```json
 {
   "APIKey": "...",
   "BoundingBoxes": [[[32.5, -117.5], [32.9, -116.9]]],
-  "FiltersShipMMSI": ["366889830", "368173590", "368068510"],
-  "FilterMessageTypes": ["PositionReport"]
+  "FilterMessageTypes": [
+    "PositionReport",
+    "StandardClassBPositionReport",
+    "ExtendedClassBPositionReport",
+    "ShipStaticData",
+    "StaticDataReport"
+  ]
 }
 ```
+No `FiltersShipMMSI` — we subscribe to all vessels in the bounding box (Class A + Class B).
 **Must be sent within 3 seconds of WebSocket open** or AISStream closes the connection.
 
 ### Heartbeat / keepalive (critical for 24/7 operation)
@@ -142,9 +155,9 @@ Without this, connections silently die when vessels are moored and no data flows
 
 ### Reconnection
 - AISStream drop → `close` event → wait 3 s → `connectToAIS()`
-- Rapid reconfigure messages are debounced 300ms to avoid race conditions
 - `disconnectAIS()` always calls `removeAllListeners()` before `terminate()` to prevent stale event handlers from old connections firing on new ones
 - Stale-connection guard: every event handler checks `if (socket !== aisWs) return`
+- Browser client disconnect does NOT tear down the shared upstream — only removes the client from `clients`
 
 ### Process stability
 ```js
@@ -185,7 +198,7 @@ Single self-contained file. No build step, no bundler.
 6. `setInterval(checkStale, 60_000)` — marks vessels grey after 10 min with no update
 
 ### Map tile layers
-Uses Leaflet's `L.control.layers()` to provide a base layer switcher in the top-right corner. Available styles:
+Uses Leaflet's `L.control.layers()` to provide a base layer switcher in the top-right corner, plus `L.control.scale()` for a mile/km ruler in the bottom-left. The scale ruler has a transparent background with black text/border (custom CSS on `.leaflet-control-scale-line`). Available styles:
 
 | Name | Source | Notes |
 |------|--------|-------|
@@ -252,7 +265,10 @@ Connects to the local relay, sends a `configure` with a broad US bounding box (`
 
 ## Known behaviors / gotchas
 
-- **Duplicate AIS connections in logs on browser refresh**: normal. The old connection's `close` event fires and it tears down cleanly within seconds.
+- **Single AISStream connection**: all browser tabs share one upstream connection. Refreshing a tab does NOT create a new AISStream connection — check logs to confirm only one `[AIS] Connected` line.
+- **Snapshot on connect**: new tabs receive the full vessel cache immediately, so the map populates in ~1s rather than waiting for the next broadcast.
+- **Class B vessels** (pleasure craft, fishing, sailboats) now appear on the map in blue (`#3b82f6`). Tracked vessels render larger in green/red.
+- **Default view = all vessels**: `trackOnly` defaults to `false` for new users. Existing users keep their saved preference.
 - **AISStream bounding box is mandatory even with MMSI filter**: both filters are ANDed. A vessel outside the box won't appear even if its MMSI is listed.
 - **`Sog` is already in knots**: do not divide by 10.
 - **`TrueHeading` of 511**: AIS code for "not available". Handled in `effectiveRotation()`.
